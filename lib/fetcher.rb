@@ -53,7 +53,10 @@ class Fetcher
     estimations = []
 
     fixtures.each do |match|
-      next if match.class != Hash
+      if match.class != Hash
+        puts "Error scanning #{LEAGUES.invert[@league_id]}"
+        return
+      end
 
       home_wins = 0
       away_wins = 0
