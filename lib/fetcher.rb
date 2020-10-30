@@ -210,7 +210,7 @@ class Fetcher
     JSON::parse(HTTParty.get(ODDS_URL, query: query).body)
   end
 
-  def proposals
+  def proposals(threshold = 70)
     games = []
       LEAGUES.each do |key, value|
         puts "Scanning #{key}..."
@@ -218,6 +218,6 @@ class Fetcher
         games << calculate
       end
 
-    games.flatten.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= 70 }}
+    games.flatten.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
   end
 end
