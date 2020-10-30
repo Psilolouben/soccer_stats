@@ -53,6 +53,8 @@ class Fetcher
     estimations = []
 
     fixtures.each do |match|
+      next if match.class != Hash
+
       home_wins = 0
       away_wins = 0
       draws = 0
