@@ -10,7 +10,7 @@ class Fetcher
     primera: '468',
     superleague: '209',
     premier: '148',
-    championship: '149',
+    #championship: '149',
     bundesliga: '195',
     ligue_1: '176',
     eredivisie: '343',
@@ -52,12 +52,14 @@ class Fetcher
   def calculate(games_back = 5)
     estimations = []
 
-    fixtures.each do |match|
+    current_fixtures = fixtures
+    current_fixtures.each_with_index do |match, i|
       if match.class != Hash
         puts "Error scanning #{LEAGUES.invert[@league_id]}"
         return
       end
 
+      puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
       home_wins = 0
       away_wins = 0
       draws = 0
@@ -187,6 +189,9 @@ class Fetcher
         end
       end
 
+      home_scoring_perc = home_scored * 100.0 / (home_team_last_results.count + head_to_head_results.count)
+      away_scoring_perc = away_scored * 100.0 / (away_team_last_results.count + head_to_head_results.count)
+
       estimations << {
         match_id: match['match_id'],
         home_team: match['match_hometeam_name'],
@@ -196,7 +201,7 @@ class Fetcher
         draw_perc: draws * (100.0/samples_count),
         under_perc: unders * (100.0/samples_count),
         over_perc: overs * (100.0/samples_count),
-        goal_goal: (home_scored + away_scored) * 100.0 / samples_count
+        goal_goal: [home_scoring_perc, away_scoring_perc].min
       }
     end
 
@@ -213,14 +218,37 @@ class Fetcher
     JSON::parse(HTTParty.get(ODDS_URL, query: query).body)
   end
 
-  def proposals(threshold = 70)
+  def proposals(threshold = nil, games_back = 5)
     games = []
-      LEAGUES.each do |key, value|
-        puts "Scanning #{key}..."
-        @league_id = value.to_s
-        games << calculate
-      end
+    LEAGUES.each do |key, value|
+      puts "Scanning #{key}..."
+      @league_id = value.to_s
+      games << calculate(games_back)
+    end
 
-    games.flatten.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
+    games = games.flatten
+
+    if threshold.present?
+      games = above_threshold(games, threshold)
+    end
+  end
+
+  def above_threshold(matches, threshold)
+    filtered = matches.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
+    pp_proposals(filtered, threshold);0
+  end
+
+  def pp_proposals(games, threshold)
+    games.each do |x|
+      txt = "#{x[:home_team]} - #{x[:away_team]} "
+      txt += "1 " if x[:home_win_perc] >= threshold
+      txt += "X " if x[:draw_perc] >= threshold
+      txt += "2 " if x[:away_win_perc] >= threshold
+      txt += "U " if x[:under_perc] >= threshold
+      txt += "O " if x[:over_perc] >= threshold
+      txt += "GG" if x[:goal_goal] >= threshold
+
+      pp txt
+    end
   end
 end
