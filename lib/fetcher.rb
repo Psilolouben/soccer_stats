@@ -10,7 +10,7 @@ class Fetcher
     primera: '468',
     superleague: '209',
     premier: '148',
-    #championship: '149',
+    championship: '149',
     bundesliga: '195',
     ligue_1: '176',
     eredivisie: '343',
@@ -33,7 +33,7 @@ class Fetcher
       'from' => params[:from_date],
       'to' => params[:to_date]
     }
-    JSON::parse(HTTParty.get(FIXTURES_URL, query: query).body)
+    JSON::parse(HTTParty.get(FIXTURES_URL, query: query).body.presence || '{}')
   end
 
   def head_to_head(home, away)
@@ -42,7 +42,7 @@ class Fetcher
       'firstTeam' => home,
       'secondTeam' => away,
     }
-    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query).body)
+    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query).body.presence || '{}')
   end
 
   def self.get_leagues
@@ -53,12 +53,12 @@ class Fetcher
     estimations = []
 
     current_fixtures = fixtures
-    current_fixtures.each_with_index do |match, i|
-      if match.class != Hash
-        puts "Error scanning #{LEAGUES.invert[@league_id]}"
-        return
-      end
 
+    return {} if current_fixtures.is_a?(Hash) && current_fixtures.key?('error')
+
+    puts "#{current_fixtures.count} fixtures found"
+    current_fixtures.each_with_index do |match, i|
+      sleep(1)
       puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
       home_wins = 0
       away_wins = 0
@@ -69,6 +69,7 @@ class Fetcher
       away_scored = 0
 
       h2h = head_to_head(match['match_hometeam_name'], match['match_awayteam_name'])
+      next if h2h.empty?
 
       head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(games_back)
       home_team_last_results = h2h['firstTeam_lastResults'].take(games_back)
@@ -215,7 +216,7 @@ class Fetcher
       'to' => params[:to_date],
       'match_id' => match_id,
     }
-    JSON::parse(HTTParty.get(ODDS_URL, query: query).body)
+    JSON::parse(HTTParty.get(ODDS_URL, query: query).body.presence || '{}')
   end
 
   def proposals(threshold = nil, games_back = 5)
@@ -226,11 +227,13 @@ class Fetcher
       games << calculate(games_back)
     end
 
-    games = games.flatten
+    final_games = games.flatten
 
     if threshold.present?
-      games = above_threshold(games, threshold)
+      final_games = above_threshold(final_games, threshold)
     end
+
+    final_games
   end
 
   def above_threshold(matches, threshold)
