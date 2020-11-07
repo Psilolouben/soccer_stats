@@ -14,7 +14,9 @@ class Fetcher
     bundesliga: '195',
     ligue_1: '176',
     eredivisie: '343',
-    serie_a: '262'
+    serie_a: '262',
+    chl: '589',
+    europa: '590'
   }.freeze
 
   attr_reader :params, :league_id
@@ -33,7 +35,11 @@ class Fetcher
       'from' => params[:from_date],
       'to' => params[:to_date]
     }
-    JSON::parse(HTTParty.get(FIXTURES_URL, query: query).body.presence || '{}')
+    response= JSON::parse(HTTParty.get(FIXTURES_URL, query: query).body.presence || '{}')
+
+    return response if response.is_a?(Hash)
+
+    response.select{|x| Time.parse(x['match_time']) > Time.now}
   end
 
   def head_to_head(home, away)
@@ -49,7 +55,8 @@ class Fetcher
     LEAGUES.keys
   end
 
-  def calculate(games_back = 5)
+  def goals_per_game(games_back = 8)
+    puts "Retrieving Match History for #{games_back} games back..."
     estimations = []
 
     current_fixtures = fixtures
@@ -58,165 +65,80 @@ class Fetcher
 
     puts "#{current_fixtures.count} fixtures found"
     current_fixtures.each_with_index do |match, i|
+      total_goals_away = 0
+      total_goals_home = 0
       sleep(1)
       puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
-      home_wins = 0
-      away_wins = 0
-      draws = 0
-      unders = 0
-      overs = 0
-      home_scored = 0
-      away_scored = 0
 
       h2h = head_to_head(match['match_hometeam_name'], match['match_awayteam_name'])
       next if h2h.empty?
 
-      head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(games_back)
+      #head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(games_back)
       home_team_last_results = h2h['firstTeam_lastResults'].take(games_back)
       away_team_last_results = h2h['secondTeam_lastResults'].take(games_back)
 
-      samples_count = head_to_head_results.count + home_team_last_results.count + away_team_last_results.count
-
-      head_to_head_results.each do |htr|
-        # Win/Draw
-        if htr['match_hometeam_score'].to_i == htr['match_awayteam_score'].to_i
-          draws += 0.5
-        elsif htr['match_hometeam_score'].to_i > htr['match_awayteam_score'].to_i
-          if htr['match_hometeam_name'] == match['match_hometeam_name']
-            home_wins += 0.5
-          else
-            away_wins += 0.5
-          end
-        else
-          if htr['match_awayteam_name'] == match['match_hometeam_name']
-            home_wins += 0.5
-          else
-            away_wins += 0.5
-          end
-        end
-
-        # U/O
-        if htr['match_hometeam_score'].to_i + htr['match_awayteam_score'].to_i > 2.5
-          overs += 0.5
-        else
-          unders += 0.5
-        end
-
-        # G-G
-        if htr['match_hometeam_name'] == match['match_hometeam_name']
-          if htr['match_hometeam_score'].to_i > 0
-            home_scored += 0.5
-          end
-          if htr['match_awayteam_score'].to_i > 0
-            away_scored += 0.5
-          end
-        else
-          if htr['match_hometeam_score'].to_i > 0
-            away_scored += 0.5
-          end
-          if htr['match_awayteam_score'].to_i > 0
-            home_scored += 0.5
-          end
-        end
-      end
-
       home_team_last_results.each do |htr|
-        if htr['match_hometeam_score'].to_i == htr['match_awayteam_score'].to_i
-          draws += 1
-        elsif htr['match_hometeam_score'].to_i > htr['match_awayteam_score'].to_i
-          if htr['match_hometeam_name'] == match['match_hometeam_name']
-            home_wins += 1
-          else
-            away_wins += 1
-          end
-        else
-          if htr['match_awayteam_name'] == match['match_hometeam_name']
-            home_wins += 1
-          else
-            away_wins += 1
-          end
-        end
-
-        if htr['match_hometeam_score'].to_i + htr['match_awayteam_score'].to_i > 2.5
-          overs += 1
-        else
-          unders += 1
-        end
-
-        # G-G
         if htr['match_hometeam_name'] == match['match_hometeam_name']
-          if htr['match_hometeam_score'].to_i > 0
-            home_scored += 1
-          end
+          total_goals_home += htr['match_hometeam_score'].to_i
         else
-          if htr['match_awayteam_score'].to_i > 0
-            home_scored += 1
-          end
+          total_goals_home += htr['match_awayteam_score'].to_i
         end
       end
 
       away_team_last_results.each do |htr|
-        if htr['match_hometeam_score'].to_i == htr['match_awayteam_score'].to_i
-          draws += 1
-        elsif htr['match_hometeam_score'].to_i > htr['match_awayteam_score'].to_i
-          if htr['match_hometeam_name'] == match['match_awayteam_name']
-            away_wins += 1
-          else
-            home_wins += 1
-          end
-        else
-          if htr['match_awayteam_name'] == match['match_awayteam_name']
-            away_wins += 1
-          else
-            home_wins += 1
-          end
-        end
-
-        if htr['match_hometeam_score'].to_i + htr['match_awayteam_score'].to_i > 2.5
-          overs += 1
-        else
-          unders += 1
-        end
-
-        # G-G
         if htr['match_awayteam_name'] == match['match_awayteam_name']
-          if htr['match_awayteam_score'].to_i > 0
-            away_scored += 1
-          end
+          total_goals_away += htr['match_awayteam_score'].to_i
         else
-          if htr['match_hometeam_score'].to_i > 0
-            away_scored += 1
-          end
+          total_goals_away += htr['match_awayteam_score'].to_i
         end
       end
-
-      home_scoring_perc = home_scored * 100.0 / (home_team_last_results.count + head_to_head_results.count)
-      away_scoring_perc = away_scored * 100.0 / (away_team_last_results.count + head_to_head_results.count)
 
       estimations << {
         match_id: match['match_id'],
         home_team: match['match_hometeam_name'],
         away_team: match['match_awayteam_name'],
-        home_win_perc: home_wins * (100.0/samples_count),
-        away_win_perc: away_wins * (100.0/samples_count),
-        draw_perc: draws * (100.0/samples_count),
-        under_perc: unders * (100.0/samples_count),
-        over_perc: overs * (100.0/samples_count),
-        goal_goal: [home_scoring_perc, away_scoring_perc].min
+        home_goals_per_match:  total_goals_home / home_team_last_results.count.to_f,
+        away_goals_per_match:  total_goals_away / away_team_last_results.count.to_f
       }
     end
 
     estimations
   end
 
-  def get_odds(match_id)
-    query = {
-      'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
-      'from' => params[:from_date],
-      'to' => params[:to_date],
-      'match_id' => match_id,
-    }
-    JSON::parse(HTTParty.get(ODDS_URL, query: query).body.presence || '{}')
+  def simulate(games, games_back = 10, number_of_simulations = 100000)
+    puts "Simulating games for #{games_back} games back. Running #{number_of_simulations} times..."
+    proposals = []
+
+    games.each do |game|
+      simulated_scores = []
+      number_of_simulations.times do
+        rand_home = rand * 2
+        rand_away = rand * 2
+
+        simulated_scores << {
+          match_id: game[:match_id],
+          home_team: game[:home_team],
+          away_team: game[:away_team],
+          home: (rand_home * game[:home_goals_per_match]).round,
+          away: (rand_away * game[:away_goals_per_match]).round
+        }
+      end
+
+      proposals <<
+      {
+        match_id: game[:match_id],
+        home_team: game[:home_team],
+        away_team: game[:away_team],
+        home_win_perc: simulated_scores.select{|sc| sc[:home] > sc[:away]}.count * 100 / number_of_simulations.to_f,
+        away_win_perc: simulated_scores.select{|sc| sc[:home] < sc[:away]}.count * 100 / number_of_simulations.to_f,
+        draw_perc: simulated_scores.select{|sc| sc[:home] == sc[:away]}.count * 100 / number_of_simulations.to_f,
+        under_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / number_of_simulations.to_f,
+        over_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / number_of_simulations.to_f,
+        goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / number_of_simulations.to_f
+      }
+    end
+
+    proposals
   end
 
   def proposals(threshold = nil, games_back = 5)
@@ -224,9 +146,8 @@ class Fetcher
     LEAGUES.each do |key, value|
       puts "Scanning #{key}..."
       @league_id = value.to_s
-      games << calculate(games_back)
+      games << simulate(goals_per_game(games_back), games_back)
     end
-
     final_games = games.flatten
 
     if threshold.present?
