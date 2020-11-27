@@ -8,15 +8,26 @@ class Fetcher
 
   LEAGUES = {
     primera: '468',
+    la_liga2: '469',
     superleague: '209',
     premier: '148',
     championship: '149',
+    league_one: '150',
+    league_two: '151',
     bundesliga: '195',
     ligue_1: '176',
+    ligue_2: '177',
     eredivisie: '343',
     serie_a: '262',
+    serie_b: '263',
     chl: '589',
-    europa: '590'
+    europa: '590',
+    brazil_1: '68',
+    primeira_liga: '391',
+    jupiter_league: '51',
+    premier_scotland: '423',
+    super_league_swiss: '491',
+    super_lig_turkey: '511'
   }.freeze
 
   attr_reader :params, :league_id
