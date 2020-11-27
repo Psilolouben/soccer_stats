@@ -126,7 +126,7 @@ class Fetcher
         if htr['match_awayteam_name'] == match['match_awayteam_name']
           total_goals_away += htr['match_awayteam_score'].to_i
         else
-          total_goals_away += htr['match_awayteam_score'].to_i
+          total_goals_away += htr['match_hometeam_score'].to_i
         end
       end
 
