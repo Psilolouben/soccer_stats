@@ -39,6 +39,25 @@ class Fetcher
     @league_id = params[:league_id]
   end
 
+  def proposals(threshold = nil, games_back = 5)
+    games = []
+
+    leagues = league_id.blank? ? LEAGUES : LEAGUES.select{ |k,v| v== league_id }
+
+    leagues.each do |key, value|
+      puts "Scanning #{key}..."
+      @league_id = value.to_s
+      games << simulate(goals_per_game(games_back), games_back)
+    end
+    final_games = games.flatten
+
+    if threshold.present?
+      final_games = above_threshold(final_games, threshold)
+    end
+
+    final_games
+  end
+
   def fixtures
     query = {
       'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
@@ -52,6 +71,12 @@ class Fetcher
 
     response.select{|x| Time.parse(x['match_time']) > Time.now}
   end
+
+  def simulate_league(games_back = 10)
+    simulate(goals_per_game(games_back), games_back)
+  end
+
+  private
 
   def head_to_head(home, away)
     query = {
@@ -67,7 +92,6 @@ class Fetcher
   end
 
   def goals_per_game(games_back = 8)
-    puts "Retrieving Match History for #{games_back} games back..."
     estimations = []
 
     current_fixtures = fixtures
@@ -75,6 +99,8 @@ class Fetcher
     return {} if current_fixtures.is_a?(Hash) && current_fixtures.key?('error')
 
     puts "#{current_fixtures.count} fixtures found"
+    puts "Retrieving Match History for #{games_back} games back..."
+
     current_fixtures.each_with_index do |match, i|
       total_goals_away = 0
       total_goals_home = 0
@@ -117,6 +143,8 @@ class Fetcher
   end
 
   def simulate(games, games_back = 10, number_of_simulations = 100000)
+    return {} if games.blank?
+
     puts "Simulating games for #{games_back} games back. Running #{number_of_simulations} times..."
     proposals = []
 
@@ -152,21 +180,7 @@ class Fetcher
     proposals
   end
 
-  def proposals(threshold = nil, games_back = 5)
-    games = []
-    LEAGUES.each do |key, value|
-      puts "Scanning #{key}..."
-      @league_id = value.to_s
-      games << simulate(goals_per_game(games_back), games_back)
-    end
-    final_games = games.flatten
 
-    if threshold.present?
-      final_games = above_threshold(final_games, threshold)
-    end
-
-    final_games
-  end
 
   def above_threshold(matches, threshold)
     filtered = matches.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
