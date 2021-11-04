@@ -7,27 +7,21 @@ class Fetcher
 
 
   LEAGUES = {
-    primera: '468',
-    la_liga2: '469',
-    superleague: '209',
-    premier: '148',
-    championship: '149',
-    league_one: '150',
-    league_two: '151',
-    bundesliga: '195',
-    ligue_1: '176',
-    ligue_2: '177',
-    eredivisie: '343',
-    serie_a: '262',
-    serie_b: '263',
-    chl: '589',
-    europa: '590',
-    brazil_1: '68',
-    primeira_liga: '391',
-    jupiter_league: '51',
-    premier_scotland: '423',
-    super_league_swiss: '491',
-    super_lig_turkey: '511'
+    primera: '468', la_liga2: '469', superleague: '209', premier: '148', championship: '149',
+    league_one: '150', league_two: '151', bundesliga: '195', ligue_1: '176', ligue_2: '177',
+    eredivisie: '343', serie_a: '262', serie_b: '263', chl: '589', europa: '590',
+    brazil_1: '68', primeira_liga: '391', jupiter_league: '51', premier_scotland: '423',
+    super_league_swiss: '491', super_lig_turkey: '511', tipico_bundesliga_au: '33',
+    vysshaya_liga_bel: '47', premier_league_bos: '63', parva_liga_bu: '78',
+    hnl_cro: '110', first_division_cy: '114', liga_cz: '120',
+    superliga_dk: '130', meistriliga_est: '158', veikkausliga_fin: '166',
+    otp_banka_liga_hu: '224', premier_ireland: '253', liga_latvia: '9673',
+    national_lux: '310', prva_crnogorska_monte: '334', nifl_premier: '354',
+    ekstraklasa_pol: '381', liga_1_romania: '400', fortuna_slovakia: '443',
+    premier_ukraine: '523', pepsideild: '232', leumit_isr: '258',
+    a_lyga_lithuania: '306', divizia_nationala_mol: '331', eliteserien_nor: '359',
+    premier_russia: '407', super_liga_servia: '434', prva_liga_slovenia: '453',
+    allsvenskan_swe: '481', cymru_wales: '551'
   }.freeze
 
   attr_reader :params, :league_id
@@ -65,7 +59,8 @@ class Fetcher
       'from' => params[:from_date],
       'to' => params[:to_date]
     }
-    response= JSON::parse(HTTParty.get(FIXTURES_URL, query: query).body.presence || '{}')
+
+    response= JSON::parse(HTTParty.get(FIXTURES_URL, query: query, verify: false).body.presence || '{}')
 
     return response if response.is_a?(Hash)
 
@@ -84,7 +79,7 @@ class Fetcher
       'firstTeam' => home,
       'secondTeam' => away,
     }
-    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query).body.presence || '{}')
+    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query, verify: false).body.presence || '{}')
   end
 
   def self.get_leagues
@@ -104,6 +99,8 @@ class Fetcher
     current_fixtures.each_with_index do |match, i|
       total_goals_away = 0
       total_goals_home = 0
+      total_goals_home_conc = 0
+      total_goals_away_conc = 0
       sleep(1)
       puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
 
@@ -117,16 +114,20 @@ class Fetcher
       home_team_last_results.each do |htr|
         if htr['match_hometeam_name'] == match['match_hometeam_name']
           total_goals_home += htr['match_hometeam_score'].to_i
+          total_goals_home_conc += htr['match_awayteam_score'].to_i
         else
           total_goals_home += htr['match_awayteam_score'].to_i
+          total_goals_home_conc += htr['match_hometeam_score'].to_i
         end
       end
 
       away_team_last_results.each do |htr|
         if htr['match_awayteam_name'] == match['match_awayteam_name']
           total_goals_away += htr['match_awayteam_score'].to_i
+          total_goals_away_conc += htr['match_hometeam_score'].to_i
         else
           total_goals_away += htr['match_hometeam_score'].to_i
+          total_goals_away_conc += htr['match_awayteam_score'].to_i
         end
       end
 
@@ -134,8 +135,8 @@ class Fetcher
         match_id: match['match_id'],
         home_team: match['match_hometeam_name'],
         away_team: match['match_awayteam_name'],
-        home_goals_per_match:  total_goals_home / home_team_last_results.count.to_f,
-        away_goals_per_match:  total_goals_away / away_team_last_results.count.to_f
+        home_goals_per_match:  ((total_goals_home / home_team_last_results.count.to_f) + (total_goals_away_conc / away_team_last_results.count.to_f)) / 2.0,
+        away_goals_per_match:  ((total_goals_away / away_team_last_results.count.to_f) + (total_goals_home_conc / home_team_last_results.count.to_f)) / 2.0
       }
     end
 
@@ -173,7 +174,11 @@ class Fetcher
         draw_perc: simulated_scores.select{|sc| sc[:home] == sc[:away]}.count * 100 / number_of_simulations.to_f,
         under_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / number_of_simulations.to_f,
         over_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / number_of_simulations.to_f,
-        goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / number_of_simulations.to_f
+        goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / number_of_simulations.to_f,
+        no_goal_goal: simulated_scores.select{|sc| sc[:home] == 0 || sc[:away] == 0}.count * 100 / number_of_simulations.to_f,
+        zero_one_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2}.count * 100 / number_of_simulations.to_f,
+        two_three_goals: simulated_scores.select{|sc| (sc[:home] + sc[:away] == 2) || (sc[:home] + sc[:away] == 3)}.count * 100 / number_of_simulations.to_f,
+        over_three_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] > 3}.count * 100 / number_of_simulations.to_f
       }
     end
 
@@ -190,12 +195,13 @@ class Fetcher
   def pp_proposals(games, threshold)
     games.each do |x|
       txt = "#{x[:home_team]} - #{x[:away_team]} "
-      txt += "1 " if x[:home_win_perc] >= threshold
-      txt += "X " if x[:draw_perc] >= threshold
-      txt += "2 " if x[:away_win_perc] >= threshold
-      txt += "U " if x[:under_perc] >= threshold
-      txt += "O " if x[:over_perc] >= threshold
-      txt += "GG" if x[:goal_goal] >= threshold
+      txt += "1 (#{x[:home_win_perc]}%)" if x[:home_win_perc] >= threshold
+      txt += "X (#{x[:draw_perc]}%)" if x[:draw_perc] >= threshold
+      txt += "2 (#{x[:away_win_perc]}%)" if x[:away_win_perc] >= threshold
+      txt += "U (#{x[:under_perc]}%)" if x[:under_perc] >= threshold
+      txt += "O (#{x[:over_perc]}%)" if x[:over_perc] >= threshold
+      txt += "GG (#{x[:goal_goal]}%)" if x[:goal_goal] >= threshold
+      txt += "NGG (#{x[:no_goal_goal]}%)" if x[:no_goal_goal] >= threshold
 
       pp txt
     end
