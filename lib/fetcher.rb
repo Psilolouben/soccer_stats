@@ -49,7 +49,7 @@ class Fetcher
       final_games = above_threshold(final_games, threshold)
     end
 
-    final_games
+    final_games.reject(&:empty)
   end
 
   def fixtures
