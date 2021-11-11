@@ -4,7 +4,7 @@ class Fetcher
   FIXTURES_URL = 'http://apiv2.apifootball.com/?action=get_events'.freeze
   HEAD2HEAD_URL = 'http://apiv2.apifootball.com/?action=get_H2H'.freeze
   ODDS_URL = 'https://apiv2.apifootball.com/?action=get_odds'.freeze
-
+  LEAGUES_URL = 'https://apiv3.apifootball.com/?action=get_leagues'.freeze
 
   LEAGUES = {
     primera: '468', la_liga2: '469', superleague: '209', premier: '148', championship: '149',
@@ -33,6 +33,15 @@ class Fetcher
     @league_id = params[:league_id]
   end
 
+  def leagues
+    @leagues ||=
+      query = {
+        'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad'
+      }
+
+    response= JSON::parse(HTTParty.get(LEAGUES_URL, query: query, verify: false).body.presence || '{}')
+  end
+
   def success_rate
     SoccerStat.last.correct_guesses / SoccerStat.last.total_guesses.to_f
   end
@@ -45,11 +54,9 @@ class Fetcher
   def proposals(threshold = nil, games_back = 5)
     games = []
 
-    leagues = league_id.blank? ? LEAGUES : LEAGUES.select{ |k,v| v== league_id }
-
-    leagues.each do |key, value|
-      puts "Scanning #{key}..."
-      @league_id = value.to_s
+    leagues.each do |lg|
+      puts "Scanning #{lg['league_name']} - #{lg['country_name']}..."
+      @league_id = lg['league_id']
       games << simulate(goals_per_game(games_back), games_back)
     end
     final_games = games.flatten
