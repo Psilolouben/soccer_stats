@@ -33,6 +33,15 @@ class Fetcher
     @league_id = params[:league_id]
   end
 
+  def success_rate
+    SoccerStat.last.correct_guesses / SoccerStat.last.total_guesses.to_f
+  end
+
+  def update_success_rate(correct_guesses, total_guesses)
+    sstat = SoccerStat.last
+    sstat.update!(correct_guesses: sstat.correct_guesses + correct_guesses, total_guesses: sstat.total_guesses + total_guesses)
+  end
+
   def proposals(threshold = nil, games_back = 5)
     games = []
 
@@ -49,7 +58,7 @@ class Fetcher
       final_games = above_threshold(final_games, threshold)
     end
 
-    final_games.reject(&:empty)
+    final_games.reject(&:empty?)
   end
 
   def fixtures

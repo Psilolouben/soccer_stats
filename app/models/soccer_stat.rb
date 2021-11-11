@@ -1,0 +1,2 @@
+class SoccerStat < ApplicationRecord
+end
