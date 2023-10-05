@@ -1,9 +1,9 @@
 require 'httparty'
 
 class Fetcher
-  FIXTURES_URL = 'http://apiv2.apifootball.com/?action=get_events'.freeze
-  HEAD2HEAD_URL = 'http://apiv2.apifootball.com/?action=get_H2H'.freeze
-  ODDS_URL = 'https://apiv2.apifootball.com/?action=get_odds'.freeze
+  FIXTURES_URL = 'http://apiv3.apifootball.com/?action=get_events'.freeze
+  HEAD2HEAD_URL = 'http://apiv3.apifootball.com/?action=get_H2H'.freeze
+  ODDS_URL = 'https://apiv3.apifootball.com/?action=get_odds'.freeze
   LEAGUES_URL = 'https://apiv3.apifootball.com/?action=get_leagues'.freeze
 
   LEAGUES = {
@@ -28,6 +28,8 @@ class Fetcher
 
   # from_date, to_date, league_id, api_key
   # f = Fetcher.new(params: {from_date: Date.today.to_s, to_date: Date.tomorrow.to_s, league_id: '149'})
+  # f.simulate_league
+  # f.proposals
   def initialize(params: {})
     @params = params
     @league_id = params[:league_id]
@@ -92,9 +94,10 @@ class Fetcher
   def head_to_head(home, away)
     query = {
       'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
-      'firstTeam' => home,
-      'secondTeam' => away,
+      'firstTeamId' => home,
+      'secondTeamId' => away,
     }
+
     JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query, verify: false).body.presence || '{}')
   end
 
@@ -119,8 +122,8 @@ class Fetcher
       total_goals_away_conc = 0
       sleep(1)
       puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
+      h2h = head_to_head(match['match_hometeam_id'], match['match_awayteam_id'])
 
-      h2h = head_to_head(match['match_hometeam_name'], match['match_awayteam_name'])
       next if h2h.empty?
 
       #head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(games_back)
@@ -168,15 +171,12 @@ class Fetcher
     games.each do |game|
       simulated_scores = []
       number_of_simulations.times do
-        rand_home = rand * 2
-        rand_away = rand * 2
-
         simulated_scores << {
           match_id: game[:match_id],
           home_team: game[:home_team],
           away_team: game[:away_team],
-          home: (rand_home * game[:home_goals_per_match]).round,
-          away: (rand_away * game[:away_goals_per_match]).round
+          home: Distribution::Poisson.rng(game[:home_goals_per_match]),
+          away: Distribution::Poisson.rng(game[:away_goals_per_match])
         }
       end
 
@@ -206,6 +206,7 @@ class Fetcher
   def above_threshold(matches, threshold)
     filtered = matches.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
     pp_proposals(filtered, threshold);0
+    filtered
   end
 
   def pp_proposals(games, threshold)
