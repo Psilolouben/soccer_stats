@@ -1,152 +1,131 @@
 require 'httparty'
 
 class Fetcher
+
+  NUMBER_OF_SIMULATIONS = 100000
   FIXTURES_URL = 'http://apiv3.apifootball.com/?action=get_events'.freeze
   HEAD2HEAD_URL = 'http://apiv3.apifootball.com/?action=get_H2H'.freeze
   ODDS_URL = 'https://apiv3.apifootball.com/?action=get_odds'.freeze
   LEAGUES_URL = 'https://apiv3.apifootball.com/?action=get_leagues'.freeze
+  POPULAR_LEAGUES = ['175', '244', '302', '168', '152', '207', '266', '3', '4', '354', '372', '24', '178']
+  DECAY_RATE = 0.95
 
-  LEAGUES = {
-    primera: '468', la_liga2: '469', superleague: '209', premier: '148', championship: '149',
-    league_one: '150', league_two: '151', bundesliga: '195', ligue_1: '176', ligue_2: '177',
-    eredivisie: '343', serie_a: '262', serie_b: '263', chl: '589', europa: '590',
-    brazil_1: '68', primeira_liga: '391', jupiter_league: '51', premier_scotland: '423',
-    super_league_swiss: '491', super_lig_turkey: '511', tipico_bundesliga_au: '33',
-    vysshaya_liga_bel: '47', premier_league_bos: '63', parva_liga_bu: '78',
-    hnl_cro: '110', first_division_cy: '114', liga_cz: '120',
-    superliga_dk: '130', meistriliga_est: '158', veikkausliga_fin: '166',
-    otp_banka_liga_hu: '224', premier_ireland: '253', liga_latvia: '9673',
-    national_lux: '310', prva_crnogorska_monte: '334', nifl_premier: '354',
-    ekstraklasa_pol: '381', liga_1_romania: '400', fortuna_slovakia: '443',
-    premier_ukraine: '523', pepsideild: '232', leumit_isr: '258',
-    a_lyga_lithuania: '306', divizia_nationala_mol: '331', eliteserien_nor: '359',
-    premier_russia: '407', super_liga_servia: '434', prva_liga_slovenia: '453',
-    allsvenskan_swe: '481', cymru_wales: '551'
-  }.freeze
-
-  attr_reader :params, :league_id
-
-  # from_date, to_date, league_id, api_key
-  # f = Fetcher.new(params: {from_date: Date.today.to_s, to_date: Date.tomorrow.to_s, league_id: '149'})
-  # f.simulate_league
-  # f.proposals
-  def initialize(params: {})
+  # t: general threshold
+  # uot: under over threshold
+  # gb: games back
+  # leagues: [] -> league ids
+  #          'pop' -> popular leagues
+  def initialize(params)
     @params = params
-    @league_id = params[:league_id]
   end
 
-  def leagues
-    @leagues ||=
-      query = {
-        'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad'
-      }
+  def proposals
+    proposals = []
 
-    response= JSON::parse(HTTParty.get(LEAGUES_URL, query: query, verify: false).body.presence || '{}')
-  end
-
-  def success_rate
-    SoccerStat.last.correct_guesses / SoccerStat.last.total_guesses.to_f
-  end
-
-  def update_success_rate(correct_guesses, total_guesses)
-    sstat = SoccerStat.last
-    sstat.update!(correct_guesses: sstat.correct_guesses + correct_guesses, total_guesses: sstat.total_guesses + total_guesses)
-  end
-
-  def proposals(threshold = nil, games_back = 5)
-    games = []
+    leagues = if @params[:leagues]
+                if @params[:leagues] == 'pop'
+                  all_leagues.select { |l| POPULAR_LEAGUES.include?(l['league_id']) }
+                else
+                  all_leagues.select { |l| @params[:leagues].include?(l['league_id']) }
+                end
+              else
+                all_leagues
+              end
 
     leagues.each do |lg|
-      puts "Scanning #{lg['league_name']} - #{lg['country_name']}..."
-      @league_id = lg['league_id']
-      games << simulate(goals_per_game(games_back), games_back)
-    end
-    final_games = games.flatten
-
-    if threshold.present?
-      final_games = above_threshold(final_games, threshold)
+      proposals << simulate_league(lg)
     end
 
-    final_games.reject(&:empty?)
-  end
+    proposals.flatten!
 
-  def fixtures
-    query = {
-      'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
-      'league_id' => @league_id,
-      'from' => params[:from_date],
-      'to' => params[:to_date]
-    }
+    proposals = above_threshold(proposals) if @params[:t]
 
-    response= JSON::parse(HTTParty.get(FIXTURES_URL, query: query, verify: false).body.presence || '{}')
-
-    return response if response.is_a?(Hash)
-
-    response.select{|x| Time.parse(x['match_time']) > Time.now}
-  end
-
-  def simulate_league(games_back = 10)
-    simulate(goals_per_game(games_back), games_back)
+    proposals.reject(&:empty?)
   end
 
   private
 
-  def head_to_head(home, away)
-    query = {
-      'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
-      'firstTeamId' => home,
-      'secondTeamId' => away,
-    }
+  def all_leagues
+    @all_leagues ||=
+      query = {
+        'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad'
+      }
 
-    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query, verify: false).body.presence || '{}')
+    JSON::parse(HTTParty.get(LEAGUES_URL, query: query, verify: false).body.presence || '{}').
+      map{ |x| x.slice('league_id', 'country_name', 'league_name')}
   end
 
-  def self.get_leagues
-    LEAGUES.keys
+  def simulate_league(league)
+    games = []
+
+    puts "Scanning #{league['league_name']} - #{league['country_name']}..."
+    game_goals = goals_per_game(league['league_id'])
+
+    simulate_games(game_goals)
+
+    #final_games = games.flatten
+
+    #if threshold.present?
+    #  final_games = above_threshold(final_games, threshold)
+    #end
+
+    #final_games.reject(&:empty?)
   end
 
-  def goals_per_game(games_back = 8)
+ def goals_per_game(league_id)
     estimations = []
 
-    current_fixtures = fixtures
+    league_fixtures = fixtures(league_id)
 
-    return {} if current_fixtures.is_a?(Hash) && current_fixtures.key?('error')
+    return {} if league_fixtures.is_a?(Hash) && league_fixtures.key?('error')
 
-    puts "#{current_fixtures.count} fixtures found"
-    puts "Retrieving Match History for #{games_back} games back..."
+    puts "#{league_fixtures.count} fixtures found"
+    puts "Retrieving Match History for #{@params[:gb]} games back..."
 
-    current_fixtures.each_with_index do |match, i|
+    league_fixtures.each_with_index do |match, i|
       total_goals_away = 0
       total_goals_home = 0
       total_goals_home_conc = 0
       total_goals_away_conc = 0
       sleep(1)
-      puts "#{i+1}/#{current_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
+      puts "#{i+1}/#{league_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
       h2h = head_to_head(match['match_hometeam_id'], match['match_awayteam_id'])
 
       next if h2h.empty?
 
-      #head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(games_back)
-      home_team_last_results = h2h['firstTeam_lastResults'].take(games_back)
-      away_team_last_results = h2h['secondTeam_lastResults'].take(games_back)
+      #head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(@params[:gb])
+      home_team_last_results = h2h['firstTeam_lastResults'].take(@params[:gb])
+      away_team_last_results = h2h['secondTeam_lastResults'].take(@params[:gb])
 
-      home_team_last_results.each do |htr|
+      weights = [1.0]  # Weight for the most recent game
+
+      # Calculate recency-based weights
+      (@params[:gb] - 1).times do
+        weight = weights.last * DECAY_RATE
+        weights.push(weight)
+      end
+
+      total_weight = weights.sum
+      normalized_weights = weights.map { |weight| weight / total_weight }.reverse
+      normalized_weights = [1] * @params[:gb]
+
+      home_team_last_results.each_with_index do |htr, idx|
         if htr['match_hometeam_name'] == match['match_hometeam_name']
-          total_goals_home += htr['match_hometeam_score'].to_i
-          total_goals_home_conc += htr['match_awayteam_score'].to_i
+          total_goals_home += htr['match_hometeam_score'].to_i * normalized_weights[idx]
+          total_goals_home_conc += htr['match_awayteam_score'].to_i * normalized_weights[idx]
         else
-          total_goals_home += htr['match_awayteam_score'].to_i
-          total_goals_home_conc += htr['match_hometeam_score'].to_i
+          total_goals_home += htr['match_awayteam_score'].to_i * normalized_weights[idx]
+          total_goals_home_conc += htr['match_hometeam_score'].to_i * normalized_weights[idx]
         end
       end
 
-      away_team_last_results.each do |htr|
+      away_team_last_results.each_with_index do |htr, idx|
         if htr['match_awayteam_name'] == match['match_awayteam_name']
-          total_goals_away += htr['match_awayteam_score'].to_i
-          total_goals_away_conc += htr['match_hometeam_score'].to_i
+          total_goals_away += htr['match_awayteam_score'].to_i * normalized_weights[idx]
+          total_goals_away_conc += htr['match_hometeam_score'].to_i * normalized_weights[idx]
         else
-          total_goals_away += htr['match_hometeam_score'].to_i
-          total_goals_away_conc += htr['match_awayteam_score'].to_i
+          total_goals_away += htr['match_hometeam_score'].to_i * normalized_weights[idx]
+          total_goals_away_conc += htr['match_awayteam_score'].to_i * normalized_weights[idx]
         end
       end
 
@@ -162,15 +141,40 @@ class Fetcher
     estimations
   end
 
-  def simulate(games, games_back = 10, number_of_simulations = 100000)
+  def fixtures(league_id)
+    query = {
+      'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
+      'league_id' => league_id,
+      'from' => @params[:from_date],
+      'to' => @params[:to_date]
+    }
+
+    response= JSON::parse(HTTParty.get(FIXTURES_URL, query: query, verify: false).body.presence || '{}')
+
+    return response if response.is_a?(Hash)
+
+    response.select{|x| (DateTime.parse(@params[:from_date])..DateTime.parse(@params[:to_date]).end_of_day) === DateTime.parse(x['match_date'])}
+  end
+
+  def head_to_head(home, away)
+    query = {
+      'APIkey' => '95ccd167a397363723112202c736a04db13b22494dee1e60acc2a2f94e949fad',
+      'firstTeamId' => home,
+      'secondTeamId' => away,
+    }
+
+    JSON::parse(HTTParty.get(HEAD2HEAD_URL, query: query, verify: false).body.presence || '{}')
+  end
+
+  def simulate_games(games)
     return {} if games.blank?
 
-    puts "Simulating games for #{games_back} games back. Running #{number_of_simulations} times..."
+    puts "Simulating games for #{@params[:gb]} games back. Running #{NUMBER_OF_SIMULATIONS} times..."
     proposals = []
 
     games.each do |game|
       simulated_scores = []
-      number_of_simulations.times do
+      NUMBER_OF_SIMULATIONS.times do
         simulated_scores << {
           match_id: game[:match_id],
           home_team: game[:home_team],
@@ -185,42 +189,27 @@ class Fetcher
         match_id: game[:match_id],
         home_team: game[:home_team],
         away_team: game[:away_team],
-        home_win_perc: simulated_scores.select{|sc| sc[:home] > sc[:away]}.count * 100 / number_of_simulations.to_f,
-        away_win_perc: simulated_scores.select{|sc| sc[:home] < sc[:away]}.count * 100 / number_of_simulations.to_f,
-        draw_perc: simulated_scores.select{|sc| sc[:home] == sc[:away]}.count * 100 / number_of_simulations.to_f,
-        under_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / number_of_simulations.to_f,
-        over_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / number_of_simulations.to_f,
-        goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / number_of_simulations.to_f,
-        no_goal_goal: simulated_scores.select{|sc| sc[:home] == 0 || sc[:away] == 0}.count * 100 / number_of_simulations.to_f,
-        zero_one_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2}.count * 100 / number_of_simulations.to_f,
-        two_three_goals: simulated_scores.select{|sc| (sc[:home] + sc[:away] == 2) || (sc[:home] + sc[:away] == 3)}.count * 100 / number_of_simulations.to_f,
-        over_three_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] > 3}.count * 100 / number_of_simulations.to_f
+        home_win_perc: simulated_scores.select{|sc| sc[:home] > sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        draw_perc: simulated_scores.select{|sc| sc[:home] == sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        away_win_perc: simulated_scores.select{|sc| sc[:home] < sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        under_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        over_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        no_goal_goal: simulated_scores.select{|sc| sc[:home] == 0 || sc[:away] == 0}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        zero_one_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        two_three_goals: simulated_scores.select{|sc| (sc[:home] + sc[:away] == 2) || (sc[:home] + sc[:away] == 3)}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        over_three_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] > 3}.count * 100 / NUMBER_OF_SIMULATIONS.to_f
       }
     end
 
     proposals
   end
 
-
-
-  def above_threshold(matches, threshold)
-    filtered = matches.select{|x| x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= threshold }}
-    pp_proposals(filtered, threshold);0
-    filtered
-  end
-
-  def pp_proposals(games, threshold)
-    games.each do |x|
-      txt = "#{x[:home_team]} - #{x[:away_team]} "
-      txt += "1 (#{x[:home_win_perc]}%)" if x[:home_win_perc] >= threshold
-      txt += "X (#{x[:draw_perc]}%)" if x[:draw_perc] >= threshold
-      txt += "2 (#{x[:away_win_perc]}%)" if x[:away_win_perc] >= threshold
-      txt += "U (#{x[:under_perc]}%)" if x[:under_perc] >= threshold
-      txt += "O (#{x[:over_perc]}%)" if x[:over_perc] >= threshold
-      txt += "GG (#{x[:goal_goal]}%)" if x[:goal_goal] >= threshold
-      txt += "NGG (#{x[:no_goal_goal]}%)" if x[:no_goal_goal] >= threshold
-
-      pp txt
+  def above_threshold(matches)
+    matches.reject(&:empty?).select do |x|
+      x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= @params[:t] } ||
+        [x[:under_perc] , x[:over_perc]].any? { |p| p > @params[:uot] } ||
+        [x[:home_win_perc] + x[:away_win_perc], x[:home_win_perc] + x[:draw_perc], x[:away_win_perc] + x[:draw_perc]].any? { |p| p >  @params[:t] }
     end
   end
 end
