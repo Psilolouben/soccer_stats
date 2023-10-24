@@ -40,7 +40,11 @@ class Fetcher
 
     proposals = above_threshold(proposals) if @params[:t]
 
-    proposals.reject(&:empty?)
+    if @params[:pp]
+      pp_bets(proposals.reject(&:empty?));0
+    else
+      return proposals.reject(&:empty?)
+    end
   end
 
   private
@@ -210,6 +214,32 @@ class Fetcher
       x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= @params[:t] } ||
         [x[:under_perc] , x[:over_perc]].any? { |p| p > @params[:uot] } ||
         [x[:home_win_perc] + x[:away_win_perc], x[:home_win_perc] + x[:draw_perc], x[:away_win_perc] + x[:draw_perc]].any? { |p| p >  @params[:t] }
+    end
+  end
+
+  def pp_bets(matches)
+    return matches unless (@params[:pp] && (@params[:t] || @params[:uot]))
+
+    matches.each do |m|
+      bet = []
+      if m[:home_win_perc] + m[:away_win_perc] > @params[:t]
+        bet << {res: "12", prob: m[:home_win_perc] + m[:away_win_perc]}
+      elsif m[:home_win_perc] + m[:draw_perc] > @params[:t]
+        bet << {res: "1X", prob: m[:home_win_perc] + m[:draw_perc]}
+      elsif m[:away_win_perc] + m[:draw_perc] > @params[:t]
+        bet << {res: "X2", prob: m[:away_win_perc] + m[:draw_perc]}
+      end
+
+      bet << { res: "U", prob: m[:under_perc] } if m[:under_perc] > @params[:uot]
+      bet << { res: "O", prob: m[:over_perc] } if m[:under_perc] > @params[:uot]
+      bet << { res: "1", prob: m[:home_win_perc] } if m[:home_win_perc] > @params[:t]
+      bet << { res: "X", prob: m[:draw_perc] } if m[:draw_perc] > @params[:t]
+      bet << { res: "2", prob: m[:away_win_perc] } if m[:away_win_perc] > @params[:t]
+
+      pp "#{m[:home_team]} - #{m[:away_team]}"
+      bet.each do |x|
+        pp "#{x[:res]} - #{x[:prob]}"
+      end
     end
   end
 end
