@@ -224,14 +224,20 @@ class Fetcher
       bet = []
       if m[:home_win_perc] + m[:away_win_perc] > @params[:t]
         bet << {res: "12", prob: m[:home_win_perc] + m[:away_win_perc]}
+        bet << {res: "1", prob: m[:home_win_perc] }
+        bet << {res: "2", prob: m[:away_win_perc]}
       elsif m[:home_win_perc] + m[:draw_perc] > @params[:t]
         bet << {res: "1X", prob: m[:home_win_perc] + m[:draw_perc]}
+        bet << {res: "1", prob: m[:home_win_perc] }
+        bet << {res: "X", prob: m[:draw_perc] }
       elsif m[:away_win_perc] + m[:draw_perc] > @params[:t]
         bet << {res: "X2", prob: m[:away_win_perc] + m[:draw_perc]}
+        bet << {res: "X", prob: m[:draw_perc] }
+        bet << {res: "2", prob: m[:away_win_perc]}
       end
 
       bet << { res: "U", prob: m[:under_perc] } if m[:under_perc] > @params[:uot]
-      bet << { res: "O", prob: m[:over_perc] } if m[:under_perc] > @params[:uot]
+      bet << { res: "O", prob: m[:over_perc] } if m[:over_perc] > @params[:uot]
       bet << { res: "1", prob: m[:home_win_perc] } if m[:home_win_perc] > @params[:t]
       bet << { res: "X", prob: m[:draw_perc] } if m[:draw_perc] > @params[:t]
       bet << { res: "2", prob: m[:away_win_perc] } if m[:away_win_perc] > @params[:t]
