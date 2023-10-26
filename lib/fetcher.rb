@@ -98,8 +98,8 @@ class Fetcher
       next if h2h.empty?
 
       #head_to_head_results = h2h['firstTeam_VS_secondTeam'].take(@params[:gb])
-      home_team_last_results = h2h['firstTeam_lastResults'].take(@params[:gb])
-      away_team_last_results = h2h['secondTeam_lastResults'].take(@params[:gb])
+      home_team_last_results = h2h['firstTeam_lastResults'].select{|x| x['league_id'] == league_id.to_s}.take(@params[:gb])
+      away_team_last_results = h2h['secondTeam_lastResults'].select{|x| x['league_id'] == league_id.to_s}.take(@params[:gb])
 
       weights = [1.0]  # Weight for the most recent game
 
