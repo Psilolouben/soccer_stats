@@ -280,6 +280,7 @@ class Fetcher
           '25' => simulated_scores.select{|sc| sc[:home_half] + sc[:away_half] > 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f
         },
         over_corners: {
+          '8' => simulated_scores.count{|x| x[:corners] > 8 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
           '9' => simulated_scores.count{|x| x[:corners] > 9 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
           '10' => simulated_scores.count{|x| x[:corners] > 10 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
           '11' => simulated_scores.count{|x| x[:corners] > 11 } * 100 / NUMBER_OF_SIMULATIONS.to_f
