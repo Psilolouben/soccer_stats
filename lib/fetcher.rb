@@ -10,6 +10,19 @@ class Fetcher
   PREDICTIONS_URL = 'https://apiv3.apifootball.com/?action=get_predictions'.freeze
   STATISTICS_URL = 'https://apiv3.apifootball.com/?action=get_statistics'.freeze
 
+  # THRESHOLDS
+
+  UNDER_OVER_HALF_THRESHOLD = 80
+  SINGLE_THRESHOLD = 60
+  DRAW_THRESHOLD = 35
+  DOUBLE_THRESHOLD = 75
+  UNDER_OVER_THRESHOLD = 70
+  CORNER_THRESHOLD = 20
+  CARDS_THRESHOLD = 20
+  PENALTY_THRESHOLD = 40
+  RED_CARD_THRESHOLD = 40
+  SCORER_THRESHOLD = 40
+
   POPULAR_LEAGUES = ['175', '244', '302', '168', '152', '207', '266', '3', '4',
                     '683', '344', '354', '372', '24', '178', '56', '322', '135',
                     '308', '259', '124', '279', '307', '253', '134', '63']
@@ -48,7 +61,7 @@ class Fetcher
 
     proposals.flatten!
 
-    proposals = above_threshold(proposals) if @params[:t]
+    proposals = above_threshold(proposals) if @params[:filter]
 
     export_to_csv(proposals.reject(&:empty?))
 
@@ -78,14 +91,6 @@ class Fetcher
     game_goals = goals_per_game(league['league_id'])
 
     simulate_games(game_goals)
-
-    #final_games = games.flatten
-
-    #if threshold.present?
-    #  final_games = above_threshold(final_games, threshold)
-    #end
-
-    #final_games.reject(&:empty?)
   end
 
  def goals_per_game(league_id)
@@ -109,9 +114,14 @@ class Fetcher
       total_goals_home_conc_half = 0
       total_goals_away_half = 0
       total_goals_away_conc_half = 0
-      total_corners = 0
-      total_yellow = 0
-      total_red = 0
+      total_home_corners = 0
+      total_home_yellow = 0
+      total_home_red = 0
+      total_home_penalties = 0
+      total_away_corners = 0
+      total_away_yellow = 0
+      total_away_red = 0
+      total_away_penalties = 0
 
       sleep(1)
       puts "#{i+1}/#{league_fixtures.count} #{match['match_hometeam_name']} - #{match['match_awayteam_name']}"
@@ -134,11 +144,30 @@ class Fetcher
       #normalized_weights = weights#.map { |weight| weight / total_weight }
       normalized_weights = [1] * @params[:gb]
 
+      home_players = Hash.new{ |hash, key| hash[key] = { goals: 0, assists: 0 } }
+      away_players = Hash.new{ |hash, key| hash[key] = { goals: 0, assists: 0 } }
+
       home_team_last_results.each_with_index do |htr, idx|
         stats = statistics(htr['match_id'])
-        total_corners += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Corners'}.sum{|x| x['home'].to_i + x['away'].to_i }
-        total_yellow += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Yellow Cards'}.sum{|x| x['home'].to_i + x['away'].to_i }
-        total_red += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Red Cards'}.sum{|x| x['home'].to_i + x['away'].to_i }
+        team_home_or_away = htr['match_hometeam_id'] == match['match_hometeam_id'] ? 'home' : 'away'
+
+        stats[htr['match_id']]['player_statistics'].
+          select{|x| x['player_assists'].to_i > 0 && x['team_name'] == team_home_or_away}.
+          each_with_object({}){|x, h| h[x['player_name']] = x['player_assists'].to_i}.each do |k, v|
+            home_players[k][:assists] += v
+          end
+
+        stats[htr['match_id']]['player_statistics'].
+          select{|x| x['player_goals'].to_i > 0 && x['team_name'] == team_home_or_away}.
+          each_with_object({}){|x, h| h[x['player_name']] = x['player_goals'].to_i}.each do |k, v|
+            home_players[k][:goals] += v
+          end
+
+        total_home_corners += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Corners'}.sum{|x| x[team_home_or_away].to_i}
+        puts "\nWARNING MISSING CARD DATA FOR #{match['match_hometeam_name']} - #{match['match_awayteam_name']}" if stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Yellow Cards'}.last.nil?
+        total_home_yellow += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Yellow Cards'}.last&.dig(team_home_or_away)&.to_i || 0
+        total_home_red += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Red Cards'}.sum{|x| x[team_home_or_away].to_i}
+        total_home_penalties += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Penalty'}.sum{|x| x[team_home_or_away].to_i}
 
         if htr['match_hometeam_id'] == match['match_hometeam_id']
           total_goals_home += htr['match_hometeam_score'].to_i * normalized_weights[idx]
@@ -154,6 +183,26 @@ class Fetcher
       end
 
       away_team_last_results.each_with_index do |htr, idx|
+        stats = statistics(htr['match_id'])
+        team_home_or_away = htr['match_hometeam_id'] == match['match_awayteam_id'] ? 'home' : 'away'
+
+        stats[htr['match_id']]['player_statistics'].
+          select{|x| x['player_goals'].to_i > 0 && x['team_name'] == team_home_or_away}.
+          each_with_object({}){|x, h| h[x['player_name']] = x['player_goals'].to_i}.each do |k, v|
+            away_players[k][:goals] += v
+          end
+
+        stats[htr['match_id']]['player_statistics'].
+          select{|x| x['player_assists'].to_i > 0 && x['team_name'] == team_home_or_away}.
+          each_with_object({}){|x, h| h[x['player_name']] = x['player_assists'].to_i}.each do |k, v|
+            away_players[k][:assists] += v
+          end
+
+        total_away_corners += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Corners'}.sum{|x| x[team_home_or_away].to_i}
+        total_away_yellow += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Yellow Cards'}.last&.dig(team_home_or_away)&.to_i || 0
+        total_away_red += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Red Cards'}.sum{|x| x[team_home_or_away].to_i}
+        total_away_penalties += stats[htr['match_id']]['statistics'].select{|x| x['type'] == 'Penalty'}.sum{|x| x[team_home_or_away].to_i}
+
         if htr['match_awayteam_id'] == match['match_awayteam_id']
           total_goals_away += htr['match_awayteam_score'].to_i * normalized_weights[idx]
           total_goals_away_conc += htr['match_hometeam_score'].to_i * normalized_weights[idx]
@@ -171,13 +220,22 @@ class Fetcher
         match_id: match['match_id'],
         home_team: match['match_hometeam_name'],
         away_team: match['match_awayteam_name'],
-        home_goals_per_match:  ((total_goals_home / home_team_last_results.count.to_f) + (total_goals_away_conc / away_team_last_results.count.to_f)) / 2.0,
-        away_goals_per_match:  ((total_goals_away / away_team_last_results.count.to_f) + (total_goals_home_conc / home_team_last_results.count.to_f)) / 2.0,
-        home_goals_half:  ((total_goals_home_half / home_team_last_results.count.to_f) + (total_goals_away_conc_half / away_team_last_results.count.to_f)) / 2.0,
-        away_goals_half:  ((total_goals_away_half / away_team_last_results.count.to_f) + (total_goals_home_conc_half / home_team_last_results.count.to_f)) / 2.0,
-        total_corners_per_match: (total_corners / home_team_last_results.count.to_f),
-        total_yellow_per_match: (total_yellow / home_team_last_results.count.to_f),
-        total_red_per_match: (total_red / home_team_last_results.count.to_f)
+       # home_goals_per_match:  ((total_goals_home / home_team_last_results.count.to_f) + (total_goals_away_conc / away_team_last_results.count.to_f)) / 2.0,
+        home_goals_per_match:  (total_goals_home + total_goals_away_conc) / (home_team_last_results.count.to_f + away_team_last_results.count.to_f),
+        away_goals_per_match:  (total_goals_away + total_goals_home_conc) / (home_team_last_results.count.to_f + away_team_last_results.count.to_f),
+        home_goals_half:  (total_goals_home_half + total_goals_away_conc_half) / (home_team_last_results.count.to_f + away_team_last_results.count.to_f),
+        away_goals_half:  (total_goals_away_half + total_goals_home_conc_half) / (home_team_last_results.count.to_f + away_team_last_results.count.to_f),
+        #away_goals_per_match:  ((total_goals_away / away_team_last_results.count.to_f) + (total_goals_home_conc / home_team_last_results.count.to_f)) / 2.0,
+        #home_goals_half:  ((total_goals_home_half / home_team_last_results.count.to_f) + (total_goals_away_conc_half / away_team_last_results.count.to_f)) / 2.0,
+        #away_goals_half:  ((total_goals_away_half / away_team_last_results.count.to_f) + (total_goals_home_conc_half / home_team_last_results.count.to_f)) / 2.0,
+        total_corners_per_match: (total_home_corners + total_away_corners) / home_team_last_results.count.to_f,
+        total_penalties_per_match: (total_home_penalties + total_away_penalties) / home_team_last_results.count.to_f,
+        home_yellow_per_match: total_home_yellow / home_team_last_results.count.to_f,
+        away_yellow_per_match: total_away_yellow / away_team_last_results.count.to_f,
+        total_yellow_per_match: (total_home_yellow + total_away_yellow) / home_team_last_results.count.to_f,
+        total_red_per_match: (total_home_red + total_away_red) / home_team_last_results.count.to_f,
+        home_players_per_match: home_players.transform_values {|v| v.transform_values{|x| x / home_team_last_results.count.to_f} },
+        away_players_per_match: away_players.transform_values {|v| v.transform_values{|x| x / away_team_last_results.count.to_f} },
       }
     end
 
@@ -254,8 +312,13 @@ class Fetcher
           home_half: Distribution::Poisson.rng(game[:home_goals_half]),
           away_half: Distribution::Poisson.rng(game[:away_goals_half]),
           corners: Distribution::Poisson.rng(game[:total_corners_per_match]),
+          penalties: Distribution::Poisson.rng(game[:total_penalties_per_match]),
+          home_yellow_cards: Distribution::Poisson.rng(game[:home_yellow_per_match]),
+          away_yellow_cards: Distribution::Poisson.rng(game[:away_yellow_per_match]),
           yellow_cards: Distribution::Poisson.rng(game[:total_yellow_per_match]),
-          red_cards: Distribution::Poisson.rng(game[:total_red_per_match])
+          red_cards: Distribution::Poisson.rng(game[:total_red_per_match]),
+          home_players: game[:home_players_per_match].transform_values { |k| k.transform_values{ |j| Distribution::Poisson.rng(j) }},
+          away_players: game[:away_players_per_match].transform_values { |k| k.transform_values{ |j| Distribution::Poisson.rng(j) }}
         }
       end
 
@@ -267,8 +330,18 @@ class Fetcher
         home_win_perc: simulated_scores.select{|sc| sc[:home] > sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
         draw_perc: simulated_scores.select{|sc| sc[:home] == sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
         away_win_perc: simulated_scores.select{|sc| sc[:home] < sc[:away]}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
-        under_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
-        over_perc: simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        under_goals: {
+          '05' => simulated_scores.select{|sc| sc[:home] + sc[:away] < 0.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '15' => simulated_scores.select{|sc| sc[:home] + sc[:away] < 1.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '25' => simulated_scores.select{|sc| sc[:home] + sc[:away] < 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '35' => simulated_scores.select{|sc| sc[:home] + sc[:away] < 3.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f
+        },
+        over_goals: {
+          '05' => simulated_scores.select{|sc| sc[:home] + sc[:away] > 0}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '15' => simulated_scores.select{|sc| sc[:home] + sc[:away] > 1.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '25' => simulated_scores.select{|sc| sc[:home] + sc[:away] > 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '35' => simulated_scores.select{|sc| sc[:home] + sc[:away] > 3.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f
+        },
         goal_goal: simulated_scores.select{|sc| sc[:home] > 0 && sc[:away] > 0}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
         no_goal_goal: simulated_scores.select{|sc| sc[:home] == 0 || sc[:away] == 0}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
         zero_one_goals: simulated_scores.select{|sc| sc[:home] + sc[:away] < 2}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
@@ -279,18 +352,38 @@ class Fetcher
           '15' => simulated_scores.select{|sc| sc[:home_half] + sc[:away_half] > 1.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f,
           '25' => simulated_scores.select{|sc| sc[:home_half] + sc[:away_half] > 2.5}.count * 100 / NUMBER_OF_SIMULATIONS.to_f
         },
-        over_corners: {
-          '8' => simulated_scores.count{|x| x[:corners] > 8 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
-          '9' => simulated_scores.count{|x| x[:corners] > 9 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
-          '10' => simulated_scores.count{|x| x[:corners] > 10 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
-          '11' => simulated_scores.count{|x| x[:corners] > 11 } * 100 / NUMBER_OF_SIMULATIONS.to_f
-        },
+        #over_corners: {
+        #  '8' => simulated_scores.count{|x| x[:corners] > 8 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        #  '9' => simulated_scores.count{|x| x[:corners] > 9 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        #  '10' => simulated_scores.count{|x| x[:corners] > 10 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        #  '11' => simulated_scores.count{|x| x[:corners] > 11 } * 100 / NUMBER_OF_SIMULATIONS.to_f
+        #},home_yellow_cards
+        home_card: { yes: simulated_scores.count{|x| x[:home_yellow_cards] > 0 } * 100 / NUMBER_OF_SIMULATIONS.to_f },
+        away_card: { yes: simulated_scores.count{|x| x[:away_yellow_cards] > 0 } * 100 / NUMBER_OF_SIMULATIONS.to_f },
         over_cards: {
           '3.5' => simulated_scores.count{|x| (x[:yellow_cards] + x[:red_cards]) > 3.5 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
           '4.5' => simulated_scores.count{|x| (x[:yellow_cards] + x[:red_cards]) > 4.5 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
-          '5.5' => simulated_scores.count{|x| (x[:yellow_cards] + x[:red_cards]) > 5.5 } * 100 / NUMBER_OF_SIMULATIONS.to_f
+          '5.5' => simulated_scores.count{|x| (x[:yellow_cards] + x[:red_cards]) > 5.5 } * 100 / NUMBER_OF_SIMULATIONS.to_f,
+          '6.5' => simulated_scores.count{|x| (x[:yellow_cards] + x[:red_cards]) > 6.5 } * 100 / NUMBER_OF_SIMULATIONS.to_f
         },
-        over_05_red_cards: simulated_scores.count{|x| x[:red_cards] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f
+        over_05_penalties: simulated_scores.count{|x| x[:penalties] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        over_05_red_cards: simulated_scores.count{|x| x[:red_cards] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f,
+        home_players: simulated_scores.map{|x| x[:home_players]}.first.keys.map do |x|
+          {
+              x => {
+                goals: simulated_scores.count{|y| y[:home_players][x][:goals] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f,
+                assists: simulated_scores.count{|y| y[:home_players][x][:assists] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f
+              }
+          }
+        end,
+        away_players: simulated_scores.map{|x| x[:away_players]}.first.keys.map do |x|
+          {
+              x => {
+                goals: simulated_scores.count{|y| y[:away_players][x][:goals] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f,
+                assists: simulated_scores.count{|y| y[:away_players][x][:assists] > 0} * 100 / NUMBER_OF_SIMULATIONS.to_f
+              }
+          }
+        end
       }
     end
 
@@ -299,44 +392,115 @@ class Fetcher
 
   def above_threshold(matches)
     matches.reject(&:empty?).select do |x|
-      x.except(:match_id, :home_team, :away_team).values.any?{|v| v >= @params[:t] } ||
-        [x[:under_perc] , x[:over_perc]].any? { |p| p > @params[:uot] } ||
-        [x[:home_win_perc] + x[:away_win_perc], x[:home_win_perc] + x[:draw_perc], x[:away_win_perc] + x[:draw_perc]].any? { |p| p >  @params[:t] }
+      x = x.with_indifferent_access
+      [x['home_win_perc'], x['away_win_perc'], x['draw_perc']].any? { |r| r > SINGLE_THRESHOLD } ||
+        (x['draw_perc'] > DRAW_THRESHOLD) ||
+        [x[:home_win_perc] + x[:away_win_perc], x[:home_win_perc] + x[:draw_perc], x[:away_win_perc] + x[:draw_perc]].any? { |r| r > DOUBLE_THRESHOLD } ||
+        x['under_goals'].values.any? { |v| v > UNDER_OVER_THRESHOLD } ||
+        x['over_goals'].values.any? { |v| v > UNDER_OVER_THRESHOLD } ||
+        (x['under_perc'] > UNDER_OVER_THRESHOLD) ||
+        (x['goal_goal'] > UNDER_OVER_THRESHOLD) ||
+        (x['no_goal_goal'] > UNDER_OVER_THRESHOLD) ||
+        [x['over_goals_half']['05'], x['over_goals_half']['15']].any? { |r| r > (UNDER_OVER_HALF_THRESHOLD) } ||
+        [x['over_goals_half']['05'], x['over_goals_half']['15']].any? { |r| r < (100 - UNDER_OVER_HALF_THRESHOLD) } ||
+        [x['over_cards']['3.5'], x['over_cards']['4.5'], x['over_cards']['5.5']].any? { |r| r > (100 - CARDS_THRESHOLD) } ||
+        [x['over_cards']['3.5'], x['over_cards']['4.5'], x['over_cards']['5.5']].any? { |r| r < (CARDS_THRESHOLD) } ||
+        #x['over_corners'].values.any? { |r| r > (100 - CORNER_THRESHOLD) } ||
+        #x['over_corners'].values.any? { |r| r < (CORNER_THRESHOLD) } ||
+        (x['over_05_penalties'] > PENALTY_THRESHOLD) ||
+        (x['over_05_red_cards'] > RED_CARD_THRESHOLD) ||
+        x[:home_players].any? { |r| r.values.first[:goals] > (SCORER_THRESHOLD) ||  r.values.first[:assists] > (SCORER_THRESHOLD)} ||
+        x[:away_players].any? { |r| r.values.first[:goals] > (SCORER_THRESHOLD) ||  r.values.first[:assists] > (SCORER_THRESHOLD)} ||
+        (x[:home_card][:yes] > 85) && (x[:away_card][:yes] > 85)
     end
   end
 
   def pp_bets(matches)
-    return matches unless (@params[:pp] && (@params[:t] || @params[:uot]))
-
     matches.each do |m|
       bet = []
-      if m[:home_win_perc] + m[:away_win_perc] > @params[:t]
+
+      if m[:home_win_perc] > SINGLE_THRESHOLD
+        bet << {res: "1", prob: m[:home_win_perc]}
+      end
+
+      if m[:draw_perc] > DRAW_THRESHOLD
+        bet << {res: "X", prob: m[:draw_perc]}
+      end
+
+      if m[:away_win_perc] > SINGLE_THRESHOLD
+        bet << {res: "2", prob: m[:away_win_perc]}
+      end
+
+      if m[:home_win_perc] + m[:away_win_perc] > DOUBLE_THRESHOLD
         bet << {res: "12", prob: m[:home_win_perc] + m[:away_win_perc]}
-      elsif m[:home_win_perc] + m[:draw_perc] > @params[:t]
         bet << {res: "1X", prob: m[:home_win_perc] + m[:draw_perc]}
-      elsif m[:away_win_perc] + m[:draw_perc] > @params[:t]
+        bet << {res: "X2", prob: m[:away_win_perc] + m[:draw_perc]}
+      elsif m[:home_win_perc] + m[:draw_perc] > DOUBLE_THRESHOLD
+        bet << {res: "12", prob: m[:home_win_perc] + m[:away_win_perc]}
+        bet << {res: "1X", prob: m[:home_win_perc] + m[:draw_perc]}
+        bet << {res: "X2", prob: m[:away_win_perc] + m[:draw_perc]}
+      elsif m[:away_win_perc] + m[:draw_perc] > DOUBLE_THRESHOLD
+        bet << {res: "12", prob: m[:home_win_perc] + m[:away_win_perc]}
+        bet << {res: "1X", prob: m[:home_win_perc] + m[:draw_perc]}
         bet << {res: "X2", prob: m[:away_win_perc] + m[:draw_perc]}
       end
-      bet << {res: "1", prob: m[:home_win_perc] }
-      bet << {res: "2", prob: m[:away_win_perc]}
-      bet << {res: "X", prob: m[:draw_perc]}
 
-      bet << { res: "U", prob: m[:under_perc] } if m[:under_perc] > @params[:uot]
-      bet << { res: "O", prob: m[:over_perc] } if m[:over_perc] > @params[:uot]
-      bet << { res: "1", prob: m[:home_win_perc] } if m[:home_win_perc] > @params[:t]
-      bet << { res: "X", prob: m[:draw_perc] } if m[:draw_perc] > @params[:t]
-      bet << { res: "2", prob: m[:away_win_perc] } if m[:away_win_perc] > @params[:t]
+      overs = m[:over_goals].select{|_,v| v > UNDER_OVER_THRESHOLD}
+      overs.each do |k,v|
+        bet << {res: "O#{k}", prob: v}
+      end
 
-      pp "#{m[:home_team]} - #{m[:away_team]}"
+      unders = m[:under_goals].select{|_,v| v > UNDER_OVER_THRESHOLD}
+      unders.each do |k,v|
+        bet << {res: "U#{k}", prob: v}
+      end
+
+      if m[:goal_goal] > UNDER_OVER_THRESHOLD
+        bet << {res: "GG", prob: m[:goal_goal]}
+      end
+
+      if m[:no_goal_goal] > UNDER_OVER_THRESHOLD
+        bet << {res: "NGG", prob: m[:no_goal_goal]}
+      end
+
+      o_half = m[:over_goals_half].select{|_,v| v > UNDER_OVER_HALF_THRESHOLD}
+      o_half.each do |k,v|
+        bet << {res: "O#{k}HT", prob: v}
+      end
+
+      u_half = m[:over_goals_half].select{|_,v| v < 100 - UNDER_OVER_HALF_THRESHOLD}
+      u_half.each do |k,v|
+        bet << {res: "U#{k}HT", prob: 100 - v}
+      end
+
+      scorers = m[:home_players].select{ |x| x.values.first[:goals] > SCORER_THRESHOLD}
+      scorers.each do |k,v|
+        bet << {res: "to score #{k}", prob: v}
+      end
+
+      assists = m[:home_players].select{ |x|  x.values.first[:assists] > SCORER_THRESHOLD}
+      assists.each do |k,v|
+        bet << {res: "assist #{k}",prob: v}
+      end
+
+      if (m[:home_card][:yes] > 85) && (m[:away_card][:yes] > 85)
+        bet << {res: "both team cards", prob: [m[:home_card][:yes], m[:away_card][:yes]].min}
+      end
+
+      if m[:over_05_penalties] > PENALTY_THRESHOLD
+        bet << {res: "penalty", prob: m[:over_05_penalties]}
+      end
+
+      puts "\n#{m[:home_team]} - #{m[:away_team]}\n"
       bet.each do |x|
-        pp "#{x[:res]} - #{x[:prob]}"
+        puts "#{x[:res]} - #{x[:prob]}"
       end
     end
   end
 
   def export_to_csv(proposals)
     CSV.open("bet_proposals.csv", "w", col_sep: ';') do |csv|
-      csv << ['Home', 'Away', '1', 'X', '2', 'U', 'O', 'APIF1', 'APIFX', 'APIF2', 'APIFU', 'APIFO']
+      csv << ['Home', 'Away', '1', 'X', '2', 'U', 'O', 'Home Scorers', ' Away Scorers', 'O GOALS HT', 'O CORNERS', 'O CARDS'] #APIF1', 'APIFX', 'APIF2', 'APIFU', 'APIFO']
       proposals.each do |game|
         csv << [
           game[:home_team].to_s,
@@ -346,11 +510,16 @@ class Fetcher
           game[:away_win_perc].to_s.gsub('.',','),
           game[:under_perc].to_s.gsub('.',','),
           game[:over_perc].to_s.gsub('.',','),
-          game[:apf_home_win_perc].to_s.gsub('.',','),
-          game[:apf_draw_perc].to_s.gsub('.',','),
-          game[:apf_away_win_perc].to_s.gsub('.',','),
-          game[:apf_under_perc].to_s.gsub('.',','),
-          game[:apf_over_perc].to_s.gsub('.',',')
+          game[:home_scorers].to_s.gsub('.',','),
+          game[:away_scorers].to_s.gsub('.',','),
+          game[:over_goals_half].to_s.gsub('.',','),
+          game[:over_corners].to_s.gsub('.',','),
+          game[:over_cards].to_s.gsub('.',',')
+          #game[:apf_home_win_perc].to_s.gsub('.',','),
+          #game[:apf_draw_perc].to_s.gsub('.',','),
+          #game[:apf_away_win_perc].to_s.gsub('.',','),
+          #game[:apf_under_perc].to_s.gsub('.',','),
+          #game[:apf_over_perc].to_s.gsub('.',',')
         ]
       end
     end;0
