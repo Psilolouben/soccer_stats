@@ -31,8 +31,10 @@ TEAM_URLS = {
   'gil_vicente': 'https://footystats.org/clubs/gil-vicente-fc-183',
   'groningen': 'https://footystats.org/clubs/fc-groningen-372',
   'guimaraes': 'https://footystats.org/clubs/vitoria-guimaraes-sc-175',
+  'kallithea': 'https://footystats.org/clubs/gs-kallithea-fc-5132',
   'kifisia': 'https://footystats.org/clubs/kifisias-fc-5168',
   'lamia': 'https://footystats.org/clubs/pas-lamia-1964-1104',
+  'levadeiakos': 'https://footystats.org/clubs/levadiakos-fc-1108',
   'liverpool': 'https://footystats.org/clubs/liverpool-fc-151',
   'lokomotiva_zagreb': 'https://footystats.org/clubs/nk-lokomotiva-zagreb-1859',
   'luzern': 'https://footystats.org/clubs/fc-luzern-890',
@@ -76,7 +78,7 @@ br.elements(class: 'mt1e comparison-table-table w100').wait_until(&:present?)
 js_doc = br.element(class: 'mt1e comparison-table-table w100')
 hsh = Nokogiri::HTML(js_doc.inner_html){ |conf| conf.noblanks };0
 xg_home_for = hsh.children.last.children.last.children.last.children[3].children[2].text.to_f
-xg_home_against = hsh.children.last.children.last.children.last.children[4].children[2].text.to_f
+xg_home_against = hsh.children.last.children.last.children.last.children[3].children[1].text.to_f
 
 br = Watir::Browser.new
 br.goto(TEAM_URLS[ARGV[1]])
@@ -84,7 +86,8 @@ br.elements(class: 'mt1e comparison-table-table w100').wait_until(&:present?)
 js_doc = br.element(class: 'mt1e comparison-table-table w100')
 hsh = Nokogiri::HTML(js_doc.inner_html){ |conf| conf.noblanks };0
 xg_away_for = hsh.children.last.children.last.children.last.children[3].children[3].text.to_f
-xg_away_against = hsh.children.last.children.last.children.last.children[4].children[3].text.to_f
+xg_away_against = hsh.children.last.children.last.children.last.children[3].children[1].text.to_f
+
 scores = []
 
 # cards
@@ -108,10 +111,12 @@ res = {
 puts "Simulating games..."
 
 100000.times do
-  home = Distribution::Poisson.rng((xg_home_for))# + xg_away_against) / 2.0)
-  away = Distribution::Poisson.rng((xg_away_for))# + xg_home_against) / 2.0)
+  home = Distribution::Poisson.rng((xg_home_for))
+  away = Distribution::Poisson.rng((xg_away_for))
+  home_ag = Distribution::Poisson.rng((xg_home_against))
+  away_ag = Distribution::Poisson.rng((xg_away_against))
 
-  scores << "#{home}-#{away}"
+  scores << "#{[home, away_ag].max}-#{[away, home_ag].max}"
 
   if home == away
     res[:draw] += 1
